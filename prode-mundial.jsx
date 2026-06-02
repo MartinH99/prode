@@ -1,0 +1,526 @@
+import { useState, useEffect, useCallback } from "react";
+
+// ─── DATOS DEL MUNDIAL 2026 – FASE DE GRUPOS ─────────────────────────────────
+const GRUPOS = {
+  A: ["Qatar", "Ecuador", "Senegal", "Países Bajos"],
+  B: ["Inglaterra", "Irán", "EEUU", "Gales"],
+  C: ["Argentina", "Arabia Saudita", "México", "Polonia"],
+  D: ["Francia", "Australia", "Dinamarca", "Túnez"],
+  E: ["España", "Costa Rica", "Alemania", "Japón"],
+  F: ["Bélgica", "Canadá", "Marruecos", "Croacia"],
+  G: ["Brasil", "Serbia", "Suiza", "Camerún"],
+  H: ["Portugal", "Ghana", "Uruguay", "Corea del Sur"],
+  I: ["Países Bajos", "Senegal", "Ecuador", "Qatar"],
+  J: ["Gales", "Irán", "EEUU", "Inglaterra"],
+  K: ["Polonia", "Arabia Saudita", "México", "Argentina"],
+  L: ["Túnez", "Australia", "Dinamarca", "Francia"],
+};
+
+const BANDERAS = {
+  "Argentina": "🇦🇷", "Brasil": "🇧🇷", "Francia": "🇫🇷", "España": "🇪🇸",
+  "Alemania": "🇩🇪", "Portugal": "🇵🇹", "Inglaterra": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Países Bajos": "🇳🇱",
+  "Uruguay": "🇺🇾", "México": "🇲🇽", "EEUU": "🇺🇸", "Canadá": "🇨🇦",
+  "Senegal": "🇸🇳", "Marruecos": "🇲🇦", "Camerún": "🇨🇲", "Ghana": "🇬🇭",
+  "Japón": "🇯🇵", "Corea del Sur": "🇰🇷", "Australia": "🇦🇺", "Irán": "🇮🇷",
+  "Arabia Saudita": "🇸🇦", "Qatar": "🇶🇦", "Ecuador": "🇪🇨", "Túnez": "🇹🇳",
+  "Polonia": "🇵🇱", "Dinamarca": "🇩🇰", "Suiza": "🇨🇭", "Serbia": "🇷🇸",
+  "Croacia": "🇭🇷", "Bélgica": "🇧🇪", "Costa Rica": "🇨🇷", "Gales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿",
+};
+
+// Genera los 3 partidos por grupo (todos contra todos)
+function generarPartidos() {
+  const partidos = [];
+  let id = 1;
+  Object.entries(GRUPOS).forEach(([grupo, equipos]) => {
+    const pares = [];
+    for (let i = 0; i < equipos.length; i++) {
+      for (let j = i + 1; j < equipos.length; j++) {
+        pares.push({ id: id++, grupo, local: equipos[i], visitante: equipos[j] });
+      }
+    }
+    partidos.push(...pares);
+  });
+  return partidos;
+}
+
+const TODOS_PARTIDOS = generarPartidos();
+
+// ─── STORAGE HELPERS ─────────────────────────────────────────────────────────
+async function cargarDatos(key) {
+  try {
+    const r = await window.storage.get(key);
+    return r ? JSON.parse(r.value) : null;
+  } catch { return null; }
+}
+async function guardarDatos(key, val) {
+  try { await window.storage.set(key, JSON.stringify(val)); } catch {}
+}
+
+// ─── CALCULAR PUNTAJE ─────────────────────────────────────────────────────────
+function calcularPuntos(pronostico, resultado) {
+  if (!pronostico || !resultado) return 0;
+  const pg = Number(pronostico.local), pv = Number(pronostico.visitante);
+  const rg = Number(resultado.local), rv = Number(resultado.visitante);
+  if (isNaN(pg) || isNaN(pv) || isNaN(rg) || isNaN(rv)) return 0;
+  if (pg === rg && pv === rv) return 3;
+  const signo = (n) => n > 0 ? 1 : n < 0 ? -1 : 0;
+  if (signo(pg - pv) === signo(rg - rv)) return 1;
+  return 0;
+}
+
+// ─── COMPONENTES ─────────────────────────────────────────────────────────────
+function NumInput({ value, onChange, disabled }) {
+  return (
+    <input
+      type="number" min="0" max="20" value={value ?? ""}
+      onChange={e => onChange(e.target.value === "" ? "" : Number(e.target.value))}
+      disabled={disabled}
+      style={{
+        width: 48, height: 40, textAlign: "center", fontSize: 20, fontWeight: 800,
+        border: "2px solid #2e7d32", borderRadius: 8, background: disabled ? "#e8f5e9" : "#fff",
+        color: "#1a1a2e", outline: "none", cursor: disabled ? "default" : "text",
+        fontFamily: "'Bebas Neue', cursive",
+      }}
+    />
+  );
+}
+
+function PartidoCard({ partido, pronostico, resultado, onPronostico, onResultado, esAdmin }) {
+  const { local, visitante, grupo } = partido;
+  const puntos = calcularPuntos(pronostico, resultado);
+  const tienePronos = pronostico?.local !== undefined && pronostico?.visitante !== undefined;
+  const tieneResult = resultado?.local !== undefined && resultado?.visitante !== undefined;
+
+  const bgPuntos = puntos === 3 ? "#00c853" : puntos === 1 ? "#ffd600" : tieneResult && tienePronos ? "#ff1744" : "transparent";
+  const colorPuntos = puntos > 0 ? "#1a1a2e" : "#fff";
+
+  return (
+    <div style={{
+      background: "rgba(255,255,255,0.04)", borderRadius: 12, padding: "14px 16px",
+      border: "1px solid rgba(255,255,255,0.08)", display: "flex", flexDirection: "column", gap: 8,
+      transition: "transform .15s", cursor: "default",
+    }}
+      onMouseEnter={e => e.currentTarget.style.transform = "translateY(-2px)"}
+      onMouseLeave={e => e.currentTarget.style.transform = "translateY(0)"}
+    >
+      {/* Equipos */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ flex: 1, textAlign: "right" }}>
+          <span style={{ fontSize: 20 }}>{BANDERAS[local] || "🏳️"}</span>
+          <span style={{ fontSize: 12, color: "#cfd8dc", marginLeft: 6, fontFamily: "'Oswald', sans-serif", letterSpacing: 1 }}>{local}</span>
+        </div>
+        <span style={{ color: "#546e7a", fontWeight: 700, fontSize: 13 }}>VS</span>
+        <div style={{ flex: 1, textAlign: "left" }}>
+          <span style={{ fontSize: 20 }}>{BANDERAS[visitante] || "🏳️"}</span>
+          <span style={{ fontSize: 12, color: "#cfd8dc", marginLeft: 6, fontFamily: "'Oswald', sans-serif", letterSpacing: 1 }}>{visitante}</span>
+        </div>
+      </div>
+
+      {/* Pronóstico */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+        <span style={{ fontSize: 11, color: "#78909c", textTransform: "uppercase", letterSpacing: 1 }}>Tu prode:</span>
+        <NumInput value={pronostico?.local ?? ""} onChange={v => onPronostico({ ...pronostico, local: v })} />
+        <span style={{ color: "#78909c", fontWeight: 900 }}>—</span>
+        <NumInput value={pronostico?.visitante ?? ""} onChange={v => onPronostico({ ...pronostico, visitante: v })} />
+      </div>
+
+      {/* Resultado real (solo admin) */}
+      {esAdmin && (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+          <span style={{ fontSize: 11, color: "#ffd600", textTransform: "uppercase", letterSpacing: 1 }}>Resultado:</span>
+          <NumInput value={resultado?.local ?? ""} onChange={v => onResultado({ ...resultado, local: v })} />
+          <span style={{ color: "#ffd600", fontWeight: 900 }}>—</span>
+          <NumInput value={resultado?.visitante ?? ""} onChange={v => onResultado({ ...resultado, visitante: v })} />
+        </div>
+      )}
+
+      {/* Puntaje badge */}
+      {tieneResult && tienePronos && (
+        <div style={{
+          alignSelf: "center", background: bgPuntos, color: colorPuntos,
+          borderRadius: 20, padding: "2px 14px", fontSize: 13, fontWeight: 900,
+          fontFamily: "'Bebas Neue', cursive", letterSpacing: 2,
+        }}>
+          {puntos === 3 ? "⚽ EXACTO +3" : puntos === 1 ? "✓ GANADOR +1" : "✗ ERRADO 0"}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── APP PRINCIPAL ────────────────────────────────────────────────────────────
+export default function ProdeApp() {
+  const [pantalla, setPantalla] = useState("inicio"); // inicio | jugar | admin | tabla
+  const [jugador, setJugador] = useState("");
+  const [inputNombre, setInputNombre] = useState("");
+  const [jugadores, setJugadores] = useState([]);
+  const [pronosticos, setPronosticos] = useState({}); // { jugador: { partidoId: { local, visitante } } }
+  const [resultados, setResultados] = useState({}); // { partidoId: { local, visitante } }
+  const [adminPass, setAdminPass] = useState("");
+  const [adminOk, setAdminOk] = useState(false);
+  const [grupoActivo, setGrupoActivo] = useState("A");
+  const [guardando, setGuardando] = useState(false);
+  const PASS = "gol2026";
+
+  // ── Cargar datos al inicio ────────────────────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      const j = await cargarDatos("prode:jugadores");
+      const p = await cargarDatos("prode:pronosticos");
+      const r = await cargarDatos("prode:resultados");
+      if (j) setJugadores(j);
+      if (p) setPronosticos(p);
+      if (r) setResultados(r);
+    })();
+  }, []);
+
+  // ── Guardar pronosticos ──────────────────────────────────────────────────
+  const guardarPronostico = useCallback(async (jug, id, val) => {
+    const nuevo = { ...pronosticos, [jug]: { ...(pronosticos[jug] || {}), [id]: val } };
+    setPronosticos(nuevo);
+    await guardarDatos("prode:pronosticos", nuevo);
+  }, [pronosticos]);
+
+  const guardarResultado = useCallback(async (id, val) => {
+    const nuevo = { ...resultados, [id]: val };
+    setResultados(nuevo);
+    await guardarDatos("prode:resultados", nuevo);
+  }, [resultados]);
+
+  const registrarJugador = async () => {
+    const nombre = inputNombre.trim();
+    if (!nombre || jugadores.includes(nombre)) return;
+    const nuevos = [...jugadores, nombre];
+    setJugadores(nuevos);
+    await guardarDatos("prode:jugadores", nuevos);
+    setJugador(nombre);
+    setPantalla("jugar");
+    setInputNombre("");
+  };
+
+  // ── Calcular tabla ────────────────────────────────────────────────────────
+  const tabla = jugadores.map(jug => {
+    let pts = 0, exactos = 0, acertados = 0;
+    TODOS_PARTIDOS.forEach(p => {
+      const pron = pronosticos[jug]?.[p.id];
+      const res = resultados[p.id];
+      const punto = calcularPuntos(pron, res);
+      pts += punto;
+      if (punto === 3) exactos++;
+      else if (punto === 1) acertados++;
+    });
+    return { jug, pts, exactos, acertados };
+  }).sort((a, b) => b.pts - a.pts);
+
+  const gruposDisponibles = [...new Set(TODOS_PARTIDOS.map(p => p.grupo))];
+  const partidosDelGrupo = TODOS_PARTIDOS.filter(p => p.grupo === grupoActivo);
+
+  // ────────────────────────────────────────────────────────────────────────
+  // ESTILOS GLOBALES
+  const css = `
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Oswald:wght@400;600;700&family=Inter:wght@400;500;600&display=swap');
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0a0e1a; }
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #111; }
+    ::-webkit-scrollbar-thumb { background: #2e7d32; border-radius: 3px; }
+    input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+    input[type=number] { -moz-appearance: textfield; }
+  `;
+
+  const base = {
+    minHeight: "100vh", background: "linear-gradient(135deg, #0a0e1a 0%, #0d2137 50%, #0a1a0d 100%)",
+    fontFamily: "'Inter', sans-serif", color: "#eceff1",
+    position: "relative", overflow: "hidden",
+  };
+
+  // ── PANTALLA INICIO ───────────────────────────────────────────────────────
+  if (pantalla === "inicio") return (
+    <div style={base}>
+      <style>{css}</style>
+      {/* Fondo decorativo */}
+      <div style={{ position: "fixed", inset: 0, pointerEvents: "none", overflow: "hidden", zIndex: 0 }}>
+        <div style={{ position: "absolute", top: -80, left: -80, width: 400, height: 400, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,200,83,0.12) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", bottom: -60, right: -60, width: 350, height: 350, borderRadius: "50%", background: "radial-gradient(circle, rgba(0,100,200,0.1) 0%, transparent 70%)" }} />
+        <div style={{ position: "absolute", top: "40%", left: "50%", transform: "translate(-50%,-50%)", fontSize: 400, opacity: 0.015, userSelect: "none" }}>⚽</div>
+      </div>
+
+      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh", padding: 24, gap: 32 }}>
+        {/* Header */}
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 64, marginBottom: 8 }}>🏆</div>
+          <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: "clamp(48px, 10vw, 96px)", letterSpacing: 6, lineHeight: 1, background: "linear-gradient(135deg, #ffd600, #ff6d00)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
+            PRODE
+          </h1>
+          <h2 style={{ fontFamily: "'Oswald', sans-serif", fontSize: "clamp(18px, 4vw, 28px)", letterSpacing: 8, color: "#80cbc4", fontWeight: 600 }}>
+            MUNDIAL 2026
+          </h2>
+          <p style={{ marginTop: 12, color: "#78909c", fontSize: 14, letterSpacing: 2 }}>
+            ⚽ FASE DE GRUPOS · 3 PTS EXACTO · 1 PT GANADOR
+          </p>
+        </div>
+
+        {/* Form entrada */}
+        <div style={{ background: "rgba(255,255,255,0.04)", backdropFilter: "blur(12px)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 16 }}>
+          <label style={{ fontFamily: "'Oswald', sans-serif", letterSpacing: 2, fontSize: 13, color: "#90a4ae", textTransform: "uppercase" }}>
+            Tu nombre
+          </label>
+          <input
+            type="text" placeholder="Ej: Martín" value={inputNombre}
+            onChange={e => setInputNombre(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && registrarJugador()}
+            style={{
+              background: "rgba(255,255,255,0.07)", border: "2px solid rgba(255,255,255,0.1)",
+              borderRadius: 12, padding: "14px 18px", fontSize: 18, color: "#fff",
+              outline: "none", fontFamily: "'Oswald', sans-serif", letterSpacing: 1,
+              transition: "border-color .2s",
+            }}
+            onFocus={e => e.target.style.borderColor = "#00c853"}
+            onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+          />
+
+          {jugadores.length > 0 && (
+            <>
+              <div style={{ textAlign: "center", color: "#546e7a", fontSize: 13 }}>— o elegí tu nombre —</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {jugadores.map(j => (
+                  <button key={j} onClick={() => { setJugador(j); setPantalla("jugar"); }}
+                    style={{
+                      background: jugador === j ? "#00c853" : "rgba(255,255,255,0.06)",
+                      border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8,
+                      padding: "8px 14px", color: "#eceff1", cursor: "pointer", fontSize: 14,
+                      fontFamily: "'Oswald', sans-serif", letterSpacing: 1, transition: "all .15s",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#00c853"}
+                    onMouseLeave={e => e.currentTarget.style.background = jugador === j ? "#00c853" : "rgba(255,255,255,0.06)"}
+                  >
+                    {j}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+
+          <button onClick={registrarJugador}
+            style={{
+              background: "linear-gradient(135deg, #00c853, #1b5e20)", border: "none",
+              borderRadius: 12, padding: "16px", fontSize: 18, color: "#fff",
+              cursor: "pointer", fontFamily: "'Bebas Neue', cursive", letterSpacing: 3,
+              boxShadow: "0 4px 24px rgba(0,200,83,0.3)", transition: "transform .1s, box-shadow .1s",
+            }}
+            onMouseDown={e => e.currentTarget.style.transform = "scale(0.97)"}
+            onMouseUp={e => e.currentTarget.style.transform = "scale(1)"}
+          >
+            🚀 Ingresar al Prode
+          </button>
+        </div>
+
+        {/* Nav */}
+        <div style={{ display: "flex", gap: 12 }}>
+          <button onClick={() => setPantalla("tabla")} style={btnSecStyle}>📊 Tabla</button>
+          <button onClick={() => setPantalla("admin")} style={btnSecStyle}>⚙️ Admin</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── PANTALLA ADMIN ────────────────────────────────────────────────────────
+  if (pantalla === "admin") return (
+    <div style={base}>
+      <style>{css}</style>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 900, margin: "0 auto", padding: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
+          <button onClick={() => setPantalla("inicio")} style={btnBackStyle}>← Volver</button>
+          <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 36, letterSpacing: 4, color: "#ffd600" }}>⚙️ Panel Admin</h1>
+        </div>
+
+        {!adminOk ? (
+          <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 20, padding: 32, maxWidth: 380 }}>
+            <p style={{ marginBottom: 16, color: "#90a4ae", fontFamily: "'Oswald', sans-serif", letterSpacing: 1 }}>Contraseña de admin:</p>
+            <input type="password" value={adminPass} onChange={e => setAdminPass(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && adminPass === PASS && setAdminOk(true)}
+              style={{ ...inputStyle, marginBottom: 14 }} placeholder="••••••••"
+              onFocus={e => e.target.style.borderColor = "#ffd600"}
+              onBlur={e => e.target.style.borderColor = "rgba(255,255,255,0.1)"}
+            />
+            <button onClick={() => adminPass === PASS ? setAdminOk(true) : alert("Contraseña incorrecta")}
+              style={{ ...btnPrimStyle, background: "linear-gradient(135deg, #ffd600, #ff6d00)" }}>
+              Entrar
+            </button>
+          </div>
+        ) : (
+          <>
+            <p style={{ color: "#78909c", marginBottom: 20, fontSize: 13, letterSpacing: 1 }}>Cargá los resultados reales de cada partido.</p>
+            {/* Selector de grupo */}
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 24 }}>
+              {gruposDisponibles.map(g => (
+                <button key={g} onClick={() => setGrupoActivo(g)}
+                  style={{
+                    ...btnGrupoStyle,
+                    background: grupoActivo === g ? "#ffd600" : "rgba(255,255,255,0.05)",
+                    color: grupoActivo === g ? "#1a1a2e" : "#eceff1",
+                  }}>
+                  G-{g}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+              {partidosDelGrupo.map(p => (
+                <PartidoCard key={p.id} partido={p}
+                  pronostico={null} resultado={resultados[p.id]}
+                  onPronostico={() => {}} onResultado={v => guardarResultado(p.id, v)}
+                  esAdmin={true}
+                />
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── PANTALLA TABLA ────────────────────────────────────────────────────────
+  if (pantalla === "tabla") return (
+    <div style={base}>
+      <style>{css}</style>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 700, margin: "0 auto", padding: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 28 }}>
+          <button onClick={() => setPantalla("inicio")} style={btnBackStyle}>← Volver</button>
+          <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 36, letterSpacing: 4 }}>📊 Tabla de Posiciones</h1>
+        </div>
+
+        {tabla.length === 0 ? (
+          <p style={{ color: "#546e7a", textAlign: "center", marginTop: 60, fontSize: 18 }}>
+            Aún no hay jugadores registrados.
+          </p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {tabla.map((row, i) => (
+              <div key={row.jug} style={{
+                display: "flex", alignItems: "center", gap: 16,
+                background: i === 0 ? "rgba(255,214,0,0.08)" : "rgba(255,255,255,0.04)",
+                border: `1px solid ${i === 0 ? "rgba(255,214,0,0.3)" : "rgba(255,255,255,0.07)"}`,
+                borderRadius: 14, padding: "16px 20px",
+              }}>
+                <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, color: i === 0 ? "#ffd600" : i === 1 ? "#90a4ae" : i === 2 ? "#ff6d00" : "#546e7a", width: 32, textAlign: "center" }}>
+                  {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i + 1}`}
+                </span>
+                <span style={{ flex: 1, fontFamily: "'Oswald', sans-serif", fontSize: 20, letterSpacing: 1 }}>{row.jug}</span>
+                <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                  <span style={{ fontSize: 12, color: "#78909c" }}>⚽ {row.exactos} | ✓ {row.acertados}</span>
+                  <span style={{
+                    fontFamily: "'Bebas Neue', cursive", fontSize: 32,
+                    color: i === 0 ? "#ffd600" : "#00c853", minWidth: 48, textAlign: "right"
+                  }}>{row.pts}</span>
+                  <span style={{ fontSize: 11, color: "#546e7a", letterSpacing: 1 }}>PTS</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  // ── PANTALLA JUGAR ────────────────────────────────────────────────────────
+  return (
+    <div style={base}>
+      <style>{css}</style>
+      <div style={{ position: "relative", zIndex: 1, maxWidth: 960, margin: "0 auto", padding: 24 }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24, flexWrap: "wrap", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <button onClick={() => setPantalla("inicio")} style={btnBackStyle}>← Salir</button>
+            <div>
+              <h1 style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 28, letterSpacing: 3 }}>
+                🏟️ MIS PRONÓSTICOS
+              </h1>
+              <p style={{ color: "#00c853", fontFamily: "'Oswald', sans-serif", fontSize: 14, letterSpacing: 2 }}>
+                👤 {jugador}
+              </p>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => setPantalla("tabla")} style={btnSecStyle}>📊 Tabla</button>
+          </div>
+        </div>
+
+        {/* Resumen puntaje */}
+        <div style={{
+          display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap",
+        }}>
+          {[
+            { label: "PUNTOS", val: TODOS_PARTIDOS.reduce((acc, p) => acc + calcularPuntos(pronosticos[jugador]?.[p.id], resultados[p.id]), 0), color: "#ffd600" },
+            { label: "EXACTOS", val: TODOS_PARTIDOS.filter(p => calcularPuntos(pronosticos[jugador]?.[p.id], resultados[p.id]) === 3).length, color: "#00c853" },
+            { label: "ACERTADOS", val: TODOS_PARTIDOS.filter(p => calcularPuntos(pronosticos[jugador]?.[p.id], resultados[p.id]) === 1).length, color: "#40c4ff" },
+          ].map(s => (
+            <div key={s.label} style={{
+              background: "rgba(255,255,255,0.04)", border: `1px solid rgba(255,255,255,0.08)`,
+              borderRadius: 12, padding: "12px 20px", display: "flex", alignItems: "center", gap: 12,
+            }}>
+              <span style={{ fontFamily: "'Bebas Neue', cursive", fontSize: 36, color: s.color, lineHeight: 1 }}>{s.val}</span>
+              <span style={{ fontSize: 11, color: "#546e7a", letterSpacing: 2, fontFamily: "'Oswald', sans-serif" }}>{s.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Selector de grupo */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 20 }}>
+          {gruposDisponibles.map(g => (
+            <button key={g} onClick={() => setGrupoActivo(g)}
+              style={{
+                ...btnGrupoStyle,
+                background: grupoActivo === g ? "#00c853" : "rgba(255,255,255,0.05)",
+                color: grupoActivo === g ? "#1a1a2e" : "#eceff1",
+              }}>
+              G-{g}
+            </button>
+          ))}
+        </div>
+
+        {/* Partidos */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+          {partidosDelGrupo.map(p => (
+            <PartidoCard key={p.id} partido={p}
+              pronostico={pronosticos[jugador]?.[p.id]}
+              resultado={resultados[p.id]}
+              onPronostico={v => guardarPronostico(jugador, p.id, v)}
+              onResultado={() => {}}
+              esAdmin={false}
+            />
+          ))}
+        </div>
+
+        <p style={{ textAlign: "center", marginTop: 24, color: "#37474f", fontSize: 12, letterSpacing: 1 }}>
+          Los cambios se guardan automáticamente ✓
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── ESTILOS COMPARTIDOS ──────────────────────────────────────────────────────
+const btnBackStyle = {
+  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)",
+  borderRadius: 8, padding: "8px 16px", color: "#90a4ae", cursor: "pointer",
+  fontFamily: "'Oswald', sans-serif", letterSpacing: 1, fontSize: 14,
+};
+const btnSecStyle = {
+  background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 10, padding: "10px 18px", color: "#eceff1", cursor: "pointer",
+  fontFamily: "'Oswald', sans-serif", letterSpacing: 1, fontSize: 14,
+};
+const btnPrimStyle = {
+  background: "linear-gradient(135deg, #00c853, #1b5e20)", border: "none",
+  borderRadius: 12, padding: "14px", fontSize: 16, color: "#fff",
+  cursor: "pointer", fontFamily: "'Bebas Neue', cursive", letterSpacing: 3, width: "100%",
+};
+const btnGrupoStyle = {
+  border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8,
+  padding: "7px 14px", cursor: "pointer", fontFamily: "'Oswald', sans-serif",
+  letterSpacing: 1, fontSize: 13, transition: "all .15s",
+};
+const inputStyle = {
+  background: "rgba(255,255,255,0.07)", border: "2px solid rgba(255,255,255,0.1)",
+  borderRadius: 12, padding: "12px 16px", fontSize: 16, color: "#fff",
+  outline: "none", fontFamily: "'Oswald', sans-serif", width: "100%",
+};
